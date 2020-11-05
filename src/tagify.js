@@ -306,18 +306,8 @@ Tagify.prototype = {
         return this
     },
 
-    /**
-     * Toggles class on the main tagify container ("scope")
-     * @param {String} className
-     * @param {Boolean} force
-     */
-    toggleClass( className, force ){
-        // force = force === undefined ?
-        this.DOM.scope.classList.toggle(className, force)
-    },
-
     toggleFocusClass( force ){
-        this.toggleClass(this.settings.classNames.focus, !!force)
+        this.DOM.scope.classList.toggle(this.settings.classNames.focus, !!force)
     },
 
     triggerChangeEvent,
@@ -426,7 +416,7 @@ Tagify.prototype = {
     },
 
     editTagToggleValidity( tagElm, value ){
-        var tagData = this.tagData(tagElm),
+        var tagData = tagElm.__tagifyTagData,
             toggleState;
 
         if( !tagData ){
@@ -443,24 +433,21 @@ Tagify.prototype = {
     },
 
     onEditTagDone(tagElm, tagData){
+        this.state.editing = false;
         tagElm = tagElm || this.state.editing.scope
         tagData = tagData || {}
 
-        var eventData = { tag:tagElm, index:this.getNodeIndex(tagElm), previousData:this.tagData(tagElm), data:tagData };
+        var eventData = { tag:tagElm, index:this.getNodeIndex(tagElm), data:tagData };
 
         this.trigger("edit:beforeUpdate", eventData)
 
-        this.state.editing = false;
         delete tagData.__originalData
         delete tagData.__originalHTML
 
-        if( tagElm && tagData[this.settings.tagTextProp] ){
+        if( tagElm ){
             this.editTagToggleValidity(tagElm)
             this.replaceTag(tagElm, tagData)
         }
-
-        else if(tagElm)
-            this.removeTags(tagElm)
 
         this.trigger("edit:updated", eventData)
         this.dropdown.hide.call(this)
@@ -659,13 +646,8 @@ Tagify.prototype = {
         }
     },
 
-    /**
-     * returns the index of the the tagData within the "this.value" array collection.
-     * since values should be unique, it is suffice to only search by "value" property
-     * @param {Object} tagData
-     */
     getTagIdx( tagData ){
-        return this.value.findIndex(item => item.value == tagData.value )
+        return this.value.findIndex(item => JSON.stringify(item) == JSON.stringify(tagData) )
     },
 
     getNodeIndex( node ){
@@ -696,16 +678,14 @@ Tagify.prototype = {
      * @param {Node}   tagElm
      * @param {Object} data
      */
-    tagData(tagElm, data, override){
+    tagData(tagElm, data){
         if( !tagElm ){
             console.warn("tag elment doesn't exist",tagElm, data)
             return data
         }
 
         if( data )
-            tagElm.__tagifyTagData = override
-                ? data
-                : extend({}, tagElm.__tagifyTagData || {}, data)
+            tagElm.__tagifyTagData = extend({}, tagElm.__tagifyTagData || {}, data)
 
         return tagElm.__tagifyTagData
     },
@@ -874,7 +854,7 @@ Tagify.prototype = {
      * @return {Array} [Array of Objects]
      */
     normalizeTags( tagsItems ){
-        var {whitelist, delimiters, mode, tagTextProp, enforceWhitelist} = this.settings,
+        var {whitelist, delimiters, mode, tagTextProp} = this.settings,
             whitelistMatches = [],
             whitelistWithProps = whitelist ? whitelist[0] instanceof Object : false,
             // checks if this is a "collection", meanning an Array of Objects
@@ -909,28 +889,25 @@ Tagify.prototype = {
 
                 // if suggestions are shown, they are already filtered, so it's easier to use them,
                 // because the whitelist might also include items which have already been added
-                var filteredList = this.dropdown.filterListItems.call(this, item[tagTextProp], { exact:true })
+                var filteredList = this.dropdown.filterListItems.call(this, item[tagTextProp])
                     // also filter out items which have already been matches in previous iterations
                     .filter(filteredItem => !whitelistMatchesValues.includes(filteredItem.value))
 
-                // get the best match out of list of possible matches.
-                // if there was a single item in the filtered list, use that one
-                var matchObj = filteredList.length > 1
-                    ? this.getWhitelistItem(item[tagTextProp], tagTextProp, filteredList)
-                    : filteredList[0]
+                // get the best match out of list of possible matches
+                var matchObj = this.getWhitelistItem(item[tagTextProp], null, filteredList)
 
                 if( matchObj && matchObj instanceof Object ){
                     whitelistMatches.push( matchObj ) // set the Array (with the found Object) as the new value
                 }
-                else if( mode != 'mix' && !enforceWhitelist ){
+                else if( mode != 'mix' ){
                     if( item.value == undefined )
                         item.value = item[tagTextProp]
                     whitelistMatches.push(item)
                 }
             })
 
-            // if( whitelistMatches.length )
-            tagsItems = whitelistMatches
+            if( whitelistMatches.length )
+                tagsItems = whitelistMatches
         }
 
         return tagsItems;
@@ -1066,6 +1043,7 @@ Tagify.prototype = {
         var tagData = extend({ value:"" }, initialData || {}),
             tagElm = this.createTagElem(tagData)
 
+        // must be assigned ASAP, before "validateTag" method below
         this.tagData(tagElm, tagData)
 
         // add the tag to the component's DOM
@@ -1174,7 +1152,7 @@ Tagify.prototype = {
     addMixTags( tagsItems ){
         var _s = this.settings,
             tagElm,
-            createdFromDelimiters = this.state.tag.delimiters
+            createdFromDelimiters = this.state.tag == null ? null : this.state.tag.delimiters;
 
         _s.transformTag.call(this, tagsItems[0])
 
@@ -1257,7 +1235,7 @@ Tagify.prototype = {
                 wasNodeDuplicate = node.getAttribute('title') == this.TEXTS.duplicate,
                 isNodeValid = this.validateTag(tagData) === true;
 
-            // if this tag node was marked as a dulpicate, unmark. (might have been marked as "notAllowed" for other reasons)
+            // if this tag node was marked as a dulpicate, unmark it (it might have been marked as "notAllowed" for other reasons)
             if( wasNodeDuplicate && isNodeValid ){
                 if( tagData.__preInvalidData )
                     tagData = tagData.__preInvalidData
@@ -1405,9 +1383,9 @@ Tagify.prototype = {
                     : this.DOM.originalInput.value
                 : this.value.length;
 
-        this.toggleClass(classNames.hasMaxTags, this.value.length >= this.settings.maxTags)
-        this.toggleClass(classNames.hasNoTags, !this.value.length)
-        this.toggleClass(classNames.empty, !hasValue)
+        this.DOM.scope.classList.toggle(classNames.hasMaxTags,  this.value.length >= this.settings.maxTags)
+        this.DOM.scope.classList.toggle(classNames.hasNoTags,  !this.value.length)
+        this.DOM.scope.classList.toggle(classNames.empty, !hasValue)
     },
 
     /**
